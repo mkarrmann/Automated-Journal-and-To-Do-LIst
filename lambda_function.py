@@ -3,25 +3,30 @@ import json
 import pickle
 import os.path
 import traceback
-from datetime import datetime, timedelta, timezone
+import io
+import smtplib, ssl
+import threading
+import time
+from queue import Queue
+from contextlib import redirect_stdout
+from datetime import timedelta, timezone
 from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 
 
 def lambda_handler(event, context):
     """Called by AWS Lambda when triggered. Calls main, and returns the traceback
     if there is an exception.
     """
-    traceback = ''
+    trace = 'Success!'
     try:
         main()
     except Exception as e:
-        traceback = traceback.format_exc()
-        print(traceback)
+        trace = traceback.format_exc()
+        print(trace)
     return {
         'statusCode': 200,
-        'body': json.dumps(traceback)
+        'body': json.dumps(trace)
     }
 
 
@@ -55,7 +60,7 @@ def getLastDate(doc):
         lastMonth (int): last month added to document
         lastDay (int): last day added to document
     """
-    # Last year is the text in the appripriate header as an int
+    # Last year is the text in the appropriate header as an int
     lastYear = int(getLastHeader(doc, config['YEAR_HEADER_NUM']))
     # Last month is the index that the text in the appropriate header occurs in
     # in the months list
@@ -178,40 +183,22 @@ def notesToGoogleDoc(notes):
     Args:
         notes (list): list of keep.note objects
     """
+    # Log in to Google Docs API using service account. It is necessary to login
+    # this way, as opposed to the standard process of validating using a pickled
+    # token, in order for login to work on AWS Lambda.
     SCOPES = ['https://www.googleapis.com/auth/documents']
-
-    # The ID of the document.
-    DOCUMENT_ID = config['DOCUMENT_ID']
-
-    # Log in to Google Docs API
-    creds = None
-    # The file token.pickle stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
+    creds = service_account.Credentials.from_service_account_file(
+        config['CREDENTIALS_FILE'], scopes=SCOPES)
     service = build('docs', 'v1', credentials=creds)
 
     # Retrieve the documents contents from the Docs service.
+    DOCUMENT_ID = config['DOCUMENT_ID']
     doc = service.documents().get(documentId=DOCUMENT_ID).execute()
 
-    # List used to match weekday numbers, with 0-based indexing, to the appropiate
-    # String
+    # List used to match weekday numbers, with 0-based indexing, to the
+    # appropriate String
     weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
                 'Saturday', 'Sunday']
-
     # Last year, month, and day present in document
     lastYear, lastMonth, lastDay = None, None, None
     # endIndex of last entry in document
@@ -252,7 +239,7 @@ def notesToGoogleDoc(notes):
         if timeCreated.day != lastDay:
             weekday = weekDays[timeCreated.weekday()]
             endIndex = addText(weekday + ' ' + ordinal(timeCreated.day),
-                               endIndex, 'HEADING_' + config['MONTH_HEADER_NUM'],
+                               endIndex, 'HEADING_' + config['DAY_HEADER_NUM'],
                                requests)
             lastDay = timeCreated.day
 
@@ -267,7 +254,6 @@ def notesToGoogleDoc(notes):
     # Execute a batch request to complete each request in order
     result = service.documents().batchUpdate(
         documentId=DOCUMENT_ID, body={'requests': requests}).execute()
-
 
 def deleteNotes(notes, keep):
     """Deletes notes from Keep.
@@ -286,8 +272,6 @@ def main():
     """Gets notes from Keep, adds them to the document in the desired format,
     and deletes the notes from Keep.
     """
-
-    # Loads JSON config file and saves it as a global variable. Config file
     # contains both customizable settings and login info that shouldn't be
     # version controlled
     filename = './config.json'
@@ -316,6 +300,6 @@ def main():
         notesToGoogleDoc(notes)
         deleteNotes(notes, keep)
 
-
+# Used for testing. Not called by AWS Lambda
 if __name__ == '__main__':
     main()
