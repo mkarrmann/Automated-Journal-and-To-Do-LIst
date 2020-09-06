@@ -1,14 +1,7 @@
 import gkeepapi
 import json
-import pickle
-import os.path
 import traceback
-import io
 import smtplib, ssl
-import threading
-import time
-from queue import Queue
-from contextlib import redirect_stdout
 from datetime import timedelta, timezone
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -24,11 +17,28 @@ def lambda_handler(event, context):
     except Exception as e:
         trace = traceback.format_exc()
         print(trace)
+        sendEmail(trace)
     return {
         'statusCode': 200,
         'body': json.dumps(trace)
     }
 
+def sendEmail(message):
+    """Sends email with given message.
+
+    Args:
+        message (String): message to be emailed
+    """
+    # Port for SSL
+    port = config['PORT']
+
+    # Create a secure SSL context
+    context = ssl.create_default_context()
+
+    # Send email
+    with smtplib.SMTP_SSL("smtp.gmail.com", port, context=context) as server:
+        server.login(config['SEND_GMAIL'], config['EMAIL_PASSWORD'])
+        server.sendmail(config['SEND_GMAIL'], config['RECEIVE_EMAIL'], message)
 
 def getLastHeader(doc, headerNum):
     """Gets the text of the last header with the named style type of heading
@@ -272,7 +282,7 @@ def main():
     """Gets notes from Keep, adds them to the document in the desired format,
     and deletes the notes from Keep.
     """
-    # contains both customizable settings and login info that shouldn't be
+    # Contains both customizable settings and login info that shouldn't be
     # version controlled
     filename = './config.json'
     with open(filename, 'r') as jsonFile:
@@ -295,7 +305,7 @@ def main():
     notes = sorted(keep.find(labels=[keep.findLabel(config['KEEP_LABEL'])]),
                    key=lambda x: x.timestamps.created)
 
-    # If any such notes are found, added them to the document and delete them
+    # If any such notes are found, add them to the document and delete them
     if notes:
         notesToGoogleDoc(notes)
         deleteNotes(notes, keep)
