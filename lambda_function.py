@@ -2,6 +2,8 @@ import gkeepapi
 import json
 import traceback
 import smtplib, ssl
+import requests
+import uuid
 from datetime import timedelta, timezone
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -181,10 +183,10 @@ def getTime(datetime):
         suffix = 'pm'
 
     # If minute is only a single digit, prepend it with a 0, else keep it the same
-    minute = str(datetime.minute) if datetime.minute >= 10 \
-             else '0' + str(datetime.minute)
-
-    return '{}:{}{}'.format(hour, minute, suffix)
+    #minute = str(datetime.minute) if datetime.minute >= 10 \
+    #         else '0' + str(datetime.minute)
+    print('{}:{:02}{}'.format(hour, datetime.minute, suffix))
+    return '{}:{:02}{}'.format(hour, datetime.minute, suffix)
 
 
 def notesToGoogleDoc(notes):
@@ -226,7 +228,6 @@ def notesToGoogleDoc(notes):
         # Time that note was created, adjusted by the appropriate timezone
         timeCreated = note.timestamps.created.astimezone(
             tz=timezone(timedelta(hours=config['TZ_ADJUSTMENT'])))
-
         # If lastYear is not equal to the year that note was created, add the
         # year to the document in the appropriate format. Update endIndex and
         # lastYear
@@ -277,6 +278,36 @@ def deleteNotes(notes, keep):
         note.delete()
     keep.sync()
 
+def addTasks(tasks):
+    """Adds given tasks to Todoists
+
+    Args:
+        tasks (Iterable): Iterable of Strings to add as tasks to todoist
+    """
+    for task in tasks:
+        # Adds task to Todoist using Todoist's REST API
+        requests.post(
+            "https://api.todoist.com/rest/v1/tasks",
+            data=json.dumps({
+                "content": task,
+            }),
+            headers={
+                "Content-Type": "application/json",
+                "X-Request-Id": str(uuid.uuid4()),
+                "Authorization": "Bearer %s" % config['TODOIST_API_TOKEN']
+            }).json()
+
+def clearTodoList(todoList, keep):
+    """Clears entries from Keep todolist
+
+    Args:
+        todoList (Keep Note): Keep note to clear list items from
+        keep (Keep object): Keep object representing Keep account to remove notes
+        from
+    """
+    for task in todoList.items:
+        task.delete()
+    keep.sync()
 
 def main():
     """Gets notes from Keep, adds them to the document in the desired format,
@@ -302,13 +333,25 @@ def main():
 
     # Gets all notes with the appropriate label and sort them based upon time
     # created
-    notes = sorted(keep.find(labels=[keep.findLabel(config['KEEP_LABEL'])]),
+    journalNotes = sorted(keep.find(labels=[keep.findLabel(config['JOURNAL_LABEL'])]),
                    key=lambda x: x.timestamps.created)
 
     # If any such notes are found, add them to the document and delete them
-    if notes:
-        notesToGoogleDoc(notes)
-        deleteNotes(notes, keep)
+    if journalNotes:
+        notesToGoogleDoc(journalNotes)
+        deleteNotes(journalNotes, keep)
+
+    todoList = keep.get(config['TODOIST_NOTE_ID'])
+    # If any entries in the todo list are found:
+    if todoList.text:
+        # Tasks are list on seperated lines starting from the second character.
+        # Gets lists of tasks
+        tasks = [item[2:] for item in todoList.text.split('\n')]
+        # Add tasks to Todoist
+        addTasks(tasks)
+        # Clear tasks from Keep list
+        clearTodoList(todoList, keep)
+
 
 # Used for testing. Not called by AWS Lambda
 if __name__ == '__main__':
