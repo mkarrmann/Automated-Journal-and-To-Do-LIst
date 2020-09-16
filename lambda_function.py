@@ -182,10 +182,6 @@ def getTime(datetime):
         hour = datetime.hour % 12
         suffix = 'pm'
 
-    # If minute is only a single digit, prepend it with a 0, else keep it the same
-    #minute = str(datetime.minute) if datetime.minute >= 10 \
-    #         else '0' + str(datetime.minute)
-    print('{}:{:02}{}'.format(hour, datetime.minute, suffix))
     return '{}:{:02}{}'.format(hour, datetime.minute, suffix)
 
 
